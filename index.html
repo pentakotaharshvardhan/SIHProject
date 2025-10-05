@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Indian Traffic Simulation - Live Demo</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; }
+        .container { display: flex; height: 100vh; }
+        .sidebar { width: 300px; background: white; padding: 20px; box-shadow: 2px 0 10px rgba(0,0,0,0.1); overflow-y: auto; }
+        .map-container { flex: 1; position: relative; }
+        .header { margin-bottom: 20px; }
+        .header h1 { color: #333; font-size: 24px; margin-bottom: 10px; }
+        .header p { color: #666; font-size: 14px; }
+        .city-selector { margin-bottom: 20px; }
+        .city-selector label { display: block; margin-bottom: 8px; font-weight: 500; color: #333; }
+        .city-selector select { width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 5px; font-size: 14px; }
+        .button { background: #007bff; color: white; border: none; padding: 12px 20px; border-radius: 5px; cursor: pointer; font-size: 14px; width: 100%; margin-bottom: 20px; }
+        .button:hover { background: #0056b3; }
+        .traffic-info { background: #f8f9fa; padding: 15px; border-radius: 5px; margin-bottom: 15px; }
+        .traffic-info h3 { color: #333; margin-bottom: 10px; font-size: 16px; }
+        .traffic-item { background: white; padding: 10px; margin-bottom: 10px; border-radius: 5px; border-left: 4px solid #007bff; }
+        .congestion-1 { border-left-color: #28a745; }
+        .congestion-2 { border-left-color: #ffc107; }
+        .congestion-3 { border-left-color: #fd7e14; }
+        .congestion-4 { border-left-color: #dc3545; }
+        .congestion-5 { border-left-color: #6f42c1; }
+        .loading { text-align: center; color: #666; padding: 20px; }
+        .error { background: #f8d7da; color: #721c24; padding: 10px; border-radius: 5px; margin-bottom: 15px; }
+        #map { width: 100%; height: 100%; }
+        .custom-popup { padding: 10px; border-radius: 5px; }
+        .custom-popup h4 { margin-bottom: 5px; color: #333; }
+        .custom-popup p { margin: 2px 0; font-size: 12px; color: #666; }
+        .deployment-info { background: #e7f3ff; padding: 10px; border-radius: 5px; margin-bottom: 15px; font-size: 12px; color: #0066cc; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="sidebar">
+            <div class="header">
+                <h1>🚦 Traffic Monitor</h1>
+                <p>Indian Cities Traffic Simulation Demo</p>
+                <div class="deployment-info">🌐 <strong>Live Demo</strong> - Deployed on GitHub Pages</div>
+            </div>
+            <div class="city-selector">
+                <label for="citySelect">Select City:</label>
+                <select id="citySelect" onchange="onCityChange()">
+                    <option value="">All Cities (Default View)</option>
+                </select>
+            </div>
+            <button class="button" onclick="fetchTrafficData()">📍 Show Traffic Points</button>
+            <button class="button" onclick="refreshData()">🔄 Refresh Data</button>
+            <div id="status" class="loading">Loading traffic data for all cities...</div>
+            <div id="trafficInfo" class="traffic-info" style="display: none;">
+                <h3>📊 Traffic Information</h3>
+                <div id="trafficList"></div>
+            </div>
+        </div>
+        <div class="map-container"><div id="map"></div></div>
+    </div>
+    <script>
+        let map, cities = [], trafficData = [], markers = [];
+        const embeddedCities = [
+            {id: 1, name: "Bangalore", lat: 12.9716, lon: 77.5946},
+            {id: 2, name: "Mumbai", lat: 19.0760, lon: 72.8777},
+            {id: 3, name: "Delhi", lat: 28.7041, lon: 77.1025},
+            {id: 4, name: "Chennai", lat: 13.0827, lon: 80.2707}
+        ];
+        const cityAreas = {
+            "Bangalore": ["MG Road", "Brigade Road", "Commercial Street", "Koramangala", "Indiranagar", "Whitefield", "Electronic City", "Marathahalli", "HSR Layout", "JP Nagar"],
+            "Mumbai": ["Marine Drive", "Linking Road", "CST", "Bandra", "Andheri", "Powai", "Goregaon", "Malad", "Borivali", "Thane"],
+            "Delhi": ["Connaught Place", "Karol Bagh", "CP", "Rajpath", "India Gate", "Chandni Chowk", "Paharganj", "Lajpat Nagar", "South Extension", "Greater Kailash"],
+            "Chennai": ["Anna Salai", "T. Nagar", "Adyar", "Velachery", "OMR", "Guindy", "Tambaram", "Chromepet", "Pallavaram", "Madipakkam"]
+        };
+        
+        function initMap() {
+            map = L.map('map').setView([20.5937, 78.9629], 5);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                attribution: '© OpenStreetMap contributors', maxZoom: 18
+            }).addTo(map);
+            loadAllTrafficData();
+        }
+        
+        function generateTrafficData() {
+            const trafficData = [];
+            const cityRanges = {
+                "Bangalore": {lat_range: 0.05, lon_range: 0.05},
+                "Mumbai": {lat_range: 0.04, lon_range: 0.04},
+                "Delhi": {lat_range: 0.06, lon_range: 0.06},
+                "Chennai": {lat_range: 0.04, lon_range: 0.04}
+            };
+            
+            embeddedCities.forEach(city => {
+                const areas = cityAreas[city.name] || ["Main Road", "Central Area"];
+                const ranges = cityRanges[city.name] || {lat_range: 0.05, lon_range: 0.05};
+                
+                areas.slice(0, 8).forEach((area, index) => {
+                    const congestion_level = Math.floor(Math.random() * 5) + 1;
+                    const avg_speed = Math.max(5, Math.min(60, Math.floor(Math.random() * 40) + 15 - (congestion_level * 8)));
+                    const expected_time = getExpectedClearTime(congestion_level, avg_speed);
+                    
+                    let lat = city.lat + (Math.random() - 0.5) * ranges.lat_range * 2;
+                    let lon = city.lon + (Math.random() - 0.5) * ranges.lon_range * 2;
+                    
+                    lat = Math.max(6.0, Math.min(37.0, lat));
+                    lon = Math.max(68.0, Math.min(97.0, lon));
+                    
+                    trafficData.push({
+                        id: trafficData.length + 1, city: city.name, area: area, lat: lat, lon: lon,
+                        congestion_level: congestion_level, avg_speed: avg_speed,
+                        expected_clear_time: expected_time, timestamp: new Date().toISOString(), status: "Active"
+                    });
+                });
+            });
+            return trafficData;
+        }
+        
+        function getExpectedClearTime(congestion_level, avg_speed) {
+            const base_times = {1: 5, 2: 15, 3: 30, 4: 60, 5: 120};
+            const speed_factor = Math.max(0.5, Math.min(2.0, 60 / Math.max(avg_speed, 5)));
+            return Math.floor(base_times[congestion_level] * speed_factor);
+        }
+        
+        function loadAllTrafficData() {
+            showLoading('Loading traffic data for all cities...');
+            setTimeout(() => {
+                trafficData = generateTrafficData();
+                updateMap();
+                showSuccess(`Loaded traffic data for all cities (${trafficData.length} points)`);
+                document.getElementById('trafficInfo').style.display = 'none';
+            }, 500);
+        }
+        
+        function loadCities() {
+            cities = embeddedCities;
+            const select = document.getElementById('citySelect');
+            select.innerHTML = '<option value="">All Cities (Default View)</option>';
+            cities.forEach(city => {
+                const option = document.createElement('option');
+                option.value = city.id;
+                option.textContent = city.name;
+                select.appendChild(option);
+            });
+        }
+        
+        function fetchTrafficData() {
+            const citySelect = document.getElementById('citySelect');
+            const selectedCityId = citySelect.value;
+            
+            if (!selectedCityId) {
+                loadAllTrafficData();
+                return;
+            }
+            
+            const selectedCity = cities.find(c => c.id == selectedCityId);
+            showLoading(`Fetching traffic data for ${selectedCity.name}...`);
+            
+            setTimeout(() => {
+                const allTrafficData = generateTrafficData();
+                trafficData = allTrafficData.filter(traffic => traffic.city === selectedCity.name);
+                displayTrafficData();
+                updateMap();
+                showSuccess(`Found ${trafficData.length} traffic points in ${selectedCity.name}`);
+            }, 500);
+        }
+        
+        function displayTrafficData() {
+            const trafficInfo = document.getElementById('trafficInfo');
+            const trafficList = document.getElementById('trafficList');
+            
+            trafficList.innerHTML = '';
+            const sortedTraffic = [...trafficData].sort((a, b) => b.congestion_level - a.congestion_level);
+            
+            sortedTraffic.forEach(traffic => {
+                const congestionText = getCongestionText(traffic.congestion_level);
+                const timeText = traffic.expected_clear_time < 60 
+                    ? `${traffic.expected_clear_time} mins` 
+                    : `${Math.floor(traffic.expected_clear_time / 60)}h ${traffic.expected_clear_time % 60}m`;
+                
+                const item = document.createElement('div');
+                item.className = `traffic-item congestion-${traffic.congestion_level}`;
+                item.innerHTML = `
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <strong>${traffic.area}</strong>
+                        <span style="font-size: 12px; background: rgba(0,0,0,0.1); padding: 2px 6px; border-radius: 10px;">${congestionText}</span>
+                    </div>
+                    <div style="margin-top: 8px;">
+                        <div style="display: flex; justify-content: space-between; margin-bottom: 4px;">
+                            <span>📍 ${traffic.city}</span>
+                            <span>🏃 ${traffic.avg_speed} km/h</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; font-size: 12px; color: #666;">
+                            <span>Level: ${traffic.congestion_level}/5</span>
+                            <span>⏱️ Clear in: ${timeText}</span>
+                        </div>
+                    </div>
+                `;
+                trafficList.appendChild(item);
+            });
+            trafficInfo.style.display = 'block';
+        }
+        
+        function getCongestionText(level) {
+            const texts = {1: "Light", 2: "Moderate", 3: "Heavy", 4: "Very Heavy", 5: "Extreme"};
+            return texts[level] || "Unknown";
+        }
+        
+        function updateMap() {
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+            
+            trafficData.forEach(traffic => {
+                const color = getCongestionColor(traffic.congestion_level);
+                const icon = getCongestionIcon(traffic.congestion_level);
+                
+                const customIcon = L.divIcon({
+                    className: 'custom-div-icon',
+                    html: `<div style="background-color: ${color}; width: 20px; height: 20px; border-radius: 50%; border: 3px solid white; box-shadow: 0 2px 4px rgba(0,0,0,0.3); display: flex; align-items: center; justify-content: center; font-size: 12px; color: white; font-weight: bold;">${icon}</div>`,
+                    iconSize: [20, 20], iconAnchor: [10, 10]
+                });
+                
+                const congestionText = getCongestionText(traffic.congestion_level);
+                const timeText = traffic.expected_clear_time < 60 
+                    ? `${traffic.expected_clear_time} mins` 
+                    : `${Math.floor(traffic.expected_clear_time / 60)}h ${traffic.expected_clear_time % 60}m`;
+                
+                const popupContent = `
+                    <div class="custom-popup">
+                        <h4>${traffic.area}</h4>
+                        <p><strong>📍 City:</strong> ${traffic.city}</p>
+                        <p><strong>🚦 Status:</strong> ${congestionText} (${traffic.congestion_level}/5)</p>
+                        <p><strong>🏃 Speed:</strong> ${traffic.avg_speed} km/h</p>
+                        <p><strong>⏱️ Clear in:</strong> ${timeText}</p>
+                    </div>
+                `;
+                
+                const marker = L.marker([traffic.lat, traffic.lon], { icon: customIcon })
+                    .addTo(map).bindPopup(popupContent);
+                markers.push(marker);
+            });
+            
+            if (trafficData.length > 0) {
+                const group = new L.featureGroup(markers);
+                const bounds = group.getBounds();
+                const sw = bounds.getSouthWest();
+                const ne = bounds.getNorthEast();
+                
+                const clampedSW = L.latLng(Math.max(6.0, sw.lat), Math.max(68.0, sw.lng));
+                const clampedNE = L.latLng(Math.min(37.0, ne.lat), Math.min(97.0, ne.lng));
+                const finalBounds = L.latLngBounds(clampedSW, clampedNE);
+                map.fitBounds(finalBounds.pad(0.05));
+            }
+        }
+        
+        function getCongestionColor(level) {
+            const colors = {1: '#28a745', 2: '#ffc107', 3: '#fd7e14', 4: '#dc3545', 5: '#6f42c1'};
+            return colors[level] || '#666';
+        }
+        
+        function getCongestionIcon(level) {
+            const icons = {1: '🟢', 2: '🟡', 3: '🟠', 4: '🔴', 5: '🟣'};
+            return icons[level] || '⚫';
+        }
+        
+        function onCityChange() {
+            const citySelect = document.getElementById('citySelect');
+            const selectedCityId = citySelect.value;
+            
+            if (selectedCityId) {
+                const selectedCity = cities.find(c => c.id == selectedCityId);
+                map.setView([selectedCity.lat, selectedCity.lon], 12);
+                trafficData = [];
+                markers.forEach(marker => map.removeLayer(marker));
+                markers = [];
+                document.getElementById('trafficInfo').style.display = 'none';
+                showSuccess(`Selected ${selectedCity.name}. Click "Show Traffic Points" to see traffic points.`);
+            } else {
+                map.setView([20.5937, 78.9629], 5);
+                trafficData = [];
+                markers.forEach(marker => map.removeLayer(marker));
+                markers = [];
+                document.getElementById('trafficInfo').style.display = 'none';
+                showSuccess('All Cities view selected. Click "Show Traffic Points" to see all traffic points.');
+            }
+        }
+        
+        function refreshData() {
+            if (trafficData.length > 0) {
+                fetchTrafficData();
+            } else {
+                showError('Please fetch traffic data first');
+            }
+        }
+        
+        function showLoading(message) {
+            document.getElementById('status').innerHTML = `<div class="loading">${message}</div>`;
+        }
+        
+        function showSuccess(message) {
+            document.getElementById('status').innerHTML = `<div style="color: #28a745; padding: 10px; background: #d4edda; border-radius: 5px;">✅ ${message}</div>`;
+        }
+        
+        function showError(message) {
+            document.getElementById('status').innerHTML = `<div class="error">❌ ${message}</div>`;
+        }
+        
+        window.onload = function() {
+            initMap();
+            loadCities();
+        };
+    </script>
+</body>
+</html>
